@@ -589,8 +589,8 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 
 				for i, cs := range p.Status.ContainerStatuses {
 					ms[i] = &metric.Metric{
-						LabelKeys:   []string{"container", "job_name", "queue"},
-						LabelValues: []string{cs.Name, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"]},
+						LabelKeys:   []string{"container", "job_name", "queue", "scheduler"},
+						LabelValues: []string{cs.Name, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], p.Spec.SchedulerName},
 						Value:       boolFloat64(cs.State.Running != nil),
 					}
 				}
@@ -900,6 +900,70 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 		),
 
 		*generator.NewFamilyGenerator(
+			"kube_pod_volcano_container_resource_used",
+			"The number of requested request resource by a container.",
+			metric.Gauge,
+			"",
+			wrapPodFunc(func(p *v1.Pod) *metric.Family {
+				ms := []*metric.Metric{}
+
+				for _, c := range p.Spec.Containers {
+					req := c.Resources.Requests
+
+					if p.Status.Phase != "Running" {
+						continue
+					}
+
+					for resourceName, val := range req {
+						switch resourceName {
+						case v1.ResourceCPU:
+							ms = append(ms, &metric.Metric{
+								LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitCore)},
+								Value:       float64(val.MilliValue()) / 1000,
+							})
+						case v1.ResourceStorage:
+							fallthrough
+						case v1.ResourceEphemeralStorage:
+							fallthrough
+						case v1.ResourceMemory:
+							ms = append(ms, &metric.Metric{
+								LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+								Value:       float64(val.Value()),
+							})
+						default:
+							if isHugePageResourceName(resourceName) {
+								ms = append(ms, &metric.Metric{
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+									Value:       float64(val.Value()),
+								})
+							}
+							if isAttachableVolumeResourceName(resourceName) {
+								ms = append(ms, &metric.Metric{
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+									Value:       float64(val.Value()),
+								})
+							}
+							if isExtendedResourceName(resourceName) {
+								ms = append(ms, &metric.Metric{
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitInteger)},
+									Value:       float64(val.Value()),
+								})
+							}
+						}
+					}
+				}
+
+				for _, metric := range ms {
+					metric.LabelKeys = []string{"container", "node", "volcano_namespace", "scheduler", "volcano_job", "queue", "resource", "unit"}
+				}
+
+				return &metric.Family{
+					Metrics: ms,
+				}
+			}),
+		),
+
+		*generator.NewFamilyGenerator(
 			"kube_pod_volcano_container_resource_requests",
 			"The number of requested request resource by a container.",
 			metric.Gauge,
@@ -914,7 +978,7 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 						switch resourceName {
 						case v1.ResourceCPU:
 							ms = append(ms, &metric.Metric{
-								LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitCore)},
+								LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitCore)},
 								Value:       float64(val.MilliValue()) / 1000,
 							})
 						case v1.ResourceStorage:
@@ -923,25 +987,25 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 							fallthrough
 						case v1.ResourceMemory:
 							ms = append(ms, &metric.Metric{
-								LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+								LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
 								Value:       float64(val.Value()),
 							})
 						default:
 							if isHugePageResourceName(resourceName) {
 								ms = append(ms, &metric.Metric{
-									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
 									Value:       float64(val.Value()),
 								})
 							}
 							if isAttachableVolumeResourceName(resourceName) {
 								ms = append(ms, &metric.Metric{
-									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
 									Value:       float64(val.Value()),
 								})
 							}
 							if isExtendedResourceName(resourceName) {
 								ms = append(ms, &metric.Metric{
-									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitInteger)},
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitInteger)},
 									Value:       float64(val.Value()),
 								})
 							}
@@ -950,7 +1014,7 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 				}
 
 				for _, metric := range ms {
-					metric.LabelKeys = []string{"container", "node", "volcano_namespace", "volcano_job", "queue", "resource", "unit"}
+					metric.LabelKeys = []string{"container", "node", "volcano_namespace", "scheduler", "volcano_job", "queue", "resource", "unit"}
 				}
 
 				return &metric.Family{
@@ -976,7 +1040,7 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 							switch resourceName {
 							case v1.ResourceCPU:
 								ms = append(ms, &metric.Metric{
-									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitCore)},
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitCore)},
 									Value:       float64(val.MilliValue()) / 1000,
 								})
 							case v1.ResourceStorage:
@@ -985,26 +1049,26 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 								fallthrough
 							case v1.ResourceMemory:
 								ms = append(ms, &metric.Metric{
-									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+									LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
 									Value:       float64(val.Value()),
 								})
 							default:
 								if isHugePageResourceName(resourceName) {
 									ms = append(ms, &metric.Metric{
-										LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+										LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
 										Value:       float64(val.Value()),
 									})
 								}
 								if isAttachableVolumeResourceName(resourceName) {
 									ms = append(ms, &metric.Metric{
 										Value:       float64(val.Value()),
-										LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
+										LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitByte)},
 									})
 								}
 								if isExtendedResourceName(resourceName) {
 									ms = append(ms, &metric.Metric{
 										Value:       float64(val.Value()),
-										LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitInteger)},
+										LabelValues: []string{c.Name, p.Spec.NodeName, p.Namespace, p.Spec.SchedulerName, p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], sanitizeLabelName(string(resourceName)), string(constant.UnitInteger)},
 									})
 
 								}
@@ -1014,7 +1078,7 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 
 				}
 				for _, metric := range ms {
-					metric.LabelKeys = []string{"container", "node", "volcano_namespace", "volcano_job", "queue", "resource", "unit"}
+					metric.LabelKeys = []string{"container", "node", "volcano_namespace", "scheduler", "volcano_job", "queue", "resource", "unit"}
 				}
 				return &metric.Family{
 					Metrics: ms,
