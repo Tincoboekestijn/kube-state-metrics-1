@@ -589,7 +589,7 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 
 				for i, cs := range p.Status.ContainerStatuses {
 					ms[i] = &metric.Metric{
-						LabelKeys:   []string{"job_name", "queue", "scheduler", "spark_app_id", "spark-app-name"},
+						LabelKeys:   []string{"job_name", "queue", "scheduler", "spark_app_id", "spark_app_name"},
 						LabelValues: []string{p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], p.Spec.SchedulerName, p.Labels["spark-app-selector"], p.Labels["spark-app-name"]},
 						Value:       boolFloat64(cs.State.Running != nil),
 					}
@@ -597,6 +597,24 @@ func podMetricFamilies(allowLabelsList []string) []generator.FamilyGenerator {
 
 				return &metric.Family{
 					Metrics: ms,
+				}
+			}),
+		),
+		*generator.NewFamilyGenerator(
+			"kube_pod_volcano_priority_class",
+			"Describes whether the container is currently in running state.",
+			metric.Gauge,
+			"",
+			wrapPodFunc(func(p *v1.Pod) *metric.Family {
+
+				m := metric.Metric{
+					LabelKeys:   []string{"job_name", "queue", "scheduler", "spark_app_id", "spark_app_name"},
+					LabelValues: []string{p.Labels["volcano.sh/job-name"], p.Labels["volcano.sh/queue-name"], p.Spec.SchedulerName, p.Labels["spark-app-selector"], p.Labels["spark-app-name"]},
+					Value:       boolFloat64(p.Spec.PriorityClassName == "high-priority"),
+				}
+
+				return &metric.Family{
+					Metrics: []*metric.Metric{&m},
 				}
 			}),
 		),
